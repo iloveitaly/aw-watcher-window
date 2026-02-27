@@ -101,7 +101,7 @@ func logPrefix(_ level: String) -> String {
 let logLevel = ProcessInfo.processInfo.environment["LOG_LEVEL"]?.uppercased() ?? "INFO"
 
 func debug(_ msg: String) {
-  if(logLevel == "DEBUG") {
+  if (logLevel == "DEBUG") {
     print("\(logPrefix("DEBUG")) \(msg)")
     fflush(stdout)
   }
@@ -313,26 +313,33 @@ class MainThing {
       return
     }
 
-    guard let bundleIdentifier = frontmost.bundleIdentifier else {
-      log("Failed to get bundle identifier from frontmost application")
-      return
-    }
-
     // calculate now before executing any scripting since that can take some time
     let nowTime = Date.now
 
     var windowTitle: AnyObject?
     AXUIElementCopyAttributeValue(axElement, kAXTitleAttribute as CFString, &windowTitle)
 
-    var data = NetworkMessage(app: frontmost.localizedName!, title: windowTitle as? String ?? "")
+    let applicationName = frontmost.localizedName ?? frontmost.bundleIdentifier ?? ""
+    var data = NetworkMessage(app: applicationName, title: windowTitle as? String ?? "")
 
-    if CHROME_BROWSERS.contains(frontmost.localizedName!) {
+    if CHROME_BROWSERS.contains(applicationName) {
       debug("Chrome browser detected, extracting URL and title")
 
+      guard let bundleIdentifier = frontmost.bundleIdentifier else {
+        log("Failed to get bundle identifier from frontmost application, which was recognized to be Chrome")
+        return
+      }
       let chromeObject: ChromeProtocol = SBApplication.init(bundleIdentifier: bundleIdentifier)!
 
-      let frontWindow = chromeObject.windows!()[0]
-      let activeTab = frontWindow.activeTab!
+      guard let windows = chromeObject.windows,
+            let frontWindow = windows().first else {
+        log("Failed to get chrome front window")
+        return
+      }
+      guard let activeTab = frontWindow.activeTab else {
+        log("Failed to get chrome active tab")
+        return
+      }
 
       if frontWindow.mode == "incognito" {
         data = NetworkMessage(app: "", title: "")
@@ -345,7 +352,7 @@ class MainThing {
 
         if let tabTitle = activeTab.title {
           if(tabTitle != "" && data.title != tabTitle) {
-            error("tab title diff: \(tabTitle), window title: \(data.title ?? "")")
+            error("tab title diff: \(tabTitle), window title: \(data.title)")
             data.title = tabTitle
           }
         }
@@ -353,10 +360,21 @@ class MainThing {
     } else if frontmost.localizedName == "Safari" {
       debug("Safari browser detected, extracting URL and title")
 
+      guard let bundleIdentifier = frontmost.bundleIdentifier else {
+        log("Failed to get bundle identifier from frontmost application, which was recognized to be Safari")
+        return
+      }
       let safariObject: SafariApplication = SBApplication.init(bundleIdentifier: bundleIdentifier)!
 
-      let frontWindow = safariObject.windows!()[0]
-      let activeTab = frontWindow.currentTab!
+      guard let windows = safariObject.windows,
+            let frontWindow = windows().first else {
+        log("Failed to get safari front window")
+        return
+      }
+      guard let activeTab = frontWindow.currentTab else {
+        log("Failed to get safari active tab")
+        return
+      }
 
       // Safari doesn't allow incognito mode to be inspected, so we do not know if we should hide the url
       data.url = activeTab.URL
@@ -364,7 +382,7 @@ class MainThing {
       // comment above applies here as well
       if let tabTitle = activeTab.name {
         if tabTitle != "" && data.title != tabTitle {
-          error("tab title diff: \(tabTitle), window title: \(data.title ?? "")")
+          error("tab title diff: \(tabTitle), window title: \(data.title)")
           data.title = tabTitle
         }
       }
@@ -378,8 +396,7 @@ class MainThing {
     debug("Focused window changed")
 
     if oldWindow != nil {
-      AXObserverRemoveNotification(
-        observer, oldWindow!, kAXFocusedWindowChangedNotification as CFString)
+      AXObserverRemoveNotification(observer, oldWindow!, kAXFocusedWindowChangedNotification as CFString)
     }
 
     let selfPtr = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
@@ -436,8 +453,7 @@ class MainThing {
       }, &observer)
 
     let selfPtr = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-    AXObserverAddNotification(
-      observer!, focusedApp, kAXFocusedWindowChangedNotification as CFString, selfPtr)
+    AXObserverAddNotification(observer!, focusedApp, kAXFocusedWindowChangedNotification as CFString, selfPtr)
 
     CFRunLoopAddSource(
       RunLoop.current.getCFRunLoop(),
